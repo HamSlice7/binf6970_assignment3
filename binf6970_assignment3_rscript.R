@@ -1,10 +1,13 @@
 ###Data Exploration 
 library(readxl)
 covid_data <- read_excel("Immunologic profiles of patients with COVID-19.xlsx")
-View(covid_data)
 
-#changing covid_data to data frame class
-covid_data <- as.data.frame(covid_data)
+#looking at the structure of covid_data
+str(covid_data)
+
+
+#checking the class of each feature
+sapply(covid_data, class)
 
 #Looking at some summary statistics
 summary(covid_data)
@@ -24,22 +27,32 @@ apply(covid_data, 2, function(x) var(x) < 1)
 #checking for a balanced data set
 table(covid_data$Severirty)
 
-#checking the class of each feature
-apply(covid_data, 2, class)
-
-#getting the numeric character columns and converting to numeric
-covid_data_2 <- apply(covid_data[,c(2,5:32)], 2, as.numeric)
-
 #finding the mean of the numeric columns
-apply(covid_data_2, 2, mean)
+sapply(covid_data, mean)
 
 #finding the standard deviations of each column
-apply(covid_data_2, 2, sd)
+sapply(covid_data, sd)
 
 #visually inspecting the distribution
-apply(covid_data_2, 2, hist)
+sapply(covid_data, function(x) {if (class(x) == "numeric"){hist(x)}})
+
+
+#calculating the means for mild and severe groups exclusively 
+
+covid_data_mild <- covid_data[covid_data$Severirty == "Mild",]
+covid_data_severe <- covid_data[covid_data$Severirty == "Severe",]
+
+#calculating mean for covid_data_mild
+mean_mild <- as.data.frame(sapply(covid_data_mild, mean))
+
+#calculating mean for covid_data_severe
+mean_severe <- as.data.frame(sapply(covid_data_severe, mean))
+
+#looking at the differences in mean
+abs(mean_mild - mean_severe)
 
 #z-score normalization
 covid_data_scale <- apply(covid_data_2, 2, scale)
 
 apply(covid_data_scale, 2, hist)
+
