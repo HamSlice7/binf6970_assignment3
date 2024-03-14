@@ -2,6 +2,7 @@ library(readxl)
 library(ggplot2)
 library(GGally)
 library(glmnet)
+library(pROC)
 
 #loading in the data
 covid_data <- read_excel("Immunologic profiles of patients with COVID-19.xlsx")
@@ -74,7 +75,7 @@ sapply(covid_data_standardized, sd)
 
 x <- covid_data_standardized[,c(-1,-3)]
 x$SEX <- ifelse(x$SEX == 'M', 1, 0)
-x$SEX <- as.factor(x$SEX)
+x <- as.matrix(x)
 
 y <- ifelse(covid_data_standardized$Severirty == "Mild", 0, 1)
 table(y)
@@ -88,7 +89,15 @@ test_index <- sample(dim(x)[1],round(dim(x)[1] *.25), replace = FALSE )
 #train model - 10 folds
 alphas <- seq(0,1,0.01)
 
-for (i in alphas) {
-  cvx <- cv.glmnet(x[-test_index,], y[-test_index,], nfolds = 10, family = "binomial", alpha = i, type.measure = "auc" )
+auc_matrix <- matrix(NA, nrow = length(alphas), ncol = 2)
+colnames(auc_matrix) <- c("Training AUC", "Testing AUC")
+
+for (i in 1:length(alphas)) {
+  cvx <- cv.glmnet(x[-test_index,], y[-test_index], nfolds = 10, family = "binomial", alpha = alphas[i], type.measure = "auc" )
+  pred_train <- predict(cvx, newx = x[-test_index,], type = "response", s=cvx$lambda.min)[,1]
+  pred_test <- predict(cvx, newx = x[test_index,], type = "response", s=cvx$lambda.min )[,1]
+  auc_train <- roc(y[-test_index], pred_train)
+  auc_test <- roc(y[test_index], pred_test)
+  auc_matrix[i,] <- c(auc_train$auc[1], auc_test$auc[1])
 }
 
