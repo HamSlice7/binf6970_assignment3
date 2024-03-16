@@ -78,7 +78,7 @@ sapply(covid_data_standardized, sd)
 ##formatting the predictors and response
 
 x <- covid_data_standardized[,c(-1,-3)]
-x$SEX <- as.factor(x$SEX)
+x$SEX <- ifelse(x$SEX == "M", 1, 0)
 x <- as.matrix(x)
 
 y <- ifelse(covid_data_standardized$Severirty == "Mild", 0, 1)
@@ -90,7 +90,7 @@ set.seed(1717)
 #generating indexes for the test set
 test_index <- sample(dim(x)[1],round(dim(x)[1] *.25), replace = FALSE )
 
-#generate fold memberships
+#generate fold memberships for 10 fold
 cvxf <- cv.glmnet(x[-test_index,],y[-test_index], nfolds = 10, keep = TRUE )
 table(cvxf$foldid)
 foldid = cvxf$foldid
@@ -101,17 +101,9 @@ alphas <- seq(0,1,0.01)
 auc_df <- data.frame(matrix(NA, nrow = length(alphas), ncol = 3))
 colnames(auc_df) <- c("Training_AUC", "Testing_AUC", "Alpha_Values")
 
-
-#making a matrix for the optimal threshold for each of the alpha-values lambdamin
-sn_sp_threshold_matrix_train <- matrix(NA, nrow = length(alphas), ncol = 4)
-colnames(sn_sp_threshold_matrix_train) <- c("Sensitivity", "Specificity", "Threshold", "Alpha_Value")
-
-sn_sp_threshold_matrix_test <- matrix(NA, nrow = length(alphas), ncol = 4)
-colnames(sn_sp_threshold_matrix_test) <- c("Sensitivity", "Specificity", "Threshold", "Alpha_Value")
-
 #for each alpha value we get the model corresponding to lambda.min. We pick the lambda.min model as our 'best model for each alpha value. From there we can measure how well each model for each alpha value performs on the training and testing data. So there will be 101 models. For each of the 101 models we also pick the best threshold. The best performing out of the 101 models will be dubbed 'the best model' and have a corresponding threshold.
 
-
+#10-fold
 for (i in 1:length(alphas)) {
   #training the model
   cvx <- cv.glmnet(x[-test_index,], y[-test_index], nfolds = 10, family = "binomial", alpha = alphas[i], type.measure = "deviance", foldid = foldid)
@@ -126,62 +118,186 @@ for (i in 1:length(alphas)) {
   #appending the area under of the curve for each model to auc_df
   auc_df[i,] <- c(auc_train$auc[1], auc_test$auc[1], alphas[i])
   
-  ###training data
-  
-  #finding the index associated with the threshold that yields the most balanced sensitivity-specificity via the min-max approach (where the min value of either sensitivity or specificity is maximized) for the training data. Each threshold has an associated sensitivity and specificity.
-  sensitivity_specificity_train <- cbind(auc_train$sensitivities, auc_train$specificities)
-  indx <- which.max(apply(sensitivity_specificity_train, 1, min))
-  #assigning the identified threshold from min-max to the cutoff variable
-  cutoff <- auc_train$thresholds[indx]
-  #assign the sensitivity, specificity, and the cutoff for each for each identified model of every alpha value to sn_sp_threshold_matrix_train
-  sn_sp_threshold_matrix_train[i,] <- c(sensitivity_specificity_train[indx,][1],sensitivity_specificity_train[indx,][2], cutoff, alphas[i])
-  
-  ###testing data
-  
-  ##finding the index associated with the threshold that yields the most balanced sensitivity-specificity via the min-max approach (where the min value of either sensitivity or specificity is maximized) for the testing data. Each threshold has an associated sensitivity and specificity.
-  sensitivity_specificity_test <- cbind(auc_test$sensitivities, auc_test$specificities)
-  indx <- which.max(apply(sensitivity_specificity_test, 1, min))
-  #assigning the identified threshold from min-max to the cutoff variable
-  cutoff <- auc_test$thresholds[indx]
-  #assign the sensitivity, specificity, and the cutoff for each for each identified model of every alpha value to sn_sp_threshold_matrix_train
-  sn_sp_threshold_matrix_test[i,] <- c(sensitivity_specificity_test[indx,][1],sensitivity_specificity_test[indx,][2], cutoff, alphas[i])
-  
 }
 
-#Using the min-max approach to find the optimal model (alpha value) assosiated with the best balance of sensitivity and specificity on the training and test set
-sn_sp_threshold_matrix_train[which.max(apply(sn_sp_threshold_matrix_train, 1, min)),]
-sn_sp_threshold_matrix_test[which.max(apply(sn_sp_threshold_matrix_test, 1, min)),]
+#getting the model associated with the largest AUC
+auc_df[which.max(auc_df$Testing_AUC),]
 
+##taking a closer look at the model with the best AUC
 
-###Visualize AUC for alpha = 1
+#training the model with alpha = 0.7 and number of folds = 10
+cvx_10fold <- cv.glmnet(x[-test_index,], y[-test_index], nfolds = 10, family = "binomial", alpha = 0.7, type.measure = "deviance", foldid = foldid)
 
-cvx_lasso <- cv.glmnet(x[-test_index,], y[-test_index], nfolds = 10, family = "binomial", alpha = 1, type.measure = "deviance", foldid = foldid)
+#predicting using the testing data
+pred_test_10fold <- predict(cvx_10fold, newx = x[test_index,], type = "response", s=cvx_10fold$lambda.min )[,1]
 
-pred_test_lasso <- predict(cvx_lasso, newx = x[test_index,], type = "response", s=cvx_lasso$lambda.min )[,1]
+#predicting using the training data
+pred_train_10fold <- predict(cvx_10fold, newx = x[-test_index,], type = "response", s=cvx_10fold$lambda.min )[,1]
 
-pred_train_lasso <- predict(cvx_lasso, newx = x[-test_index,], type = "response", s=cvx_lasso$lambda.min )[,1]
+#plotting bionomial deviance and log(lambda) for alpha = 0.7
+plot(cvx_10fold)
 
+#finding the AUC for the training data
+auc_train_10fold <- roc(y[-test_index], pred_train_10fold)
 
-auc_train_lasso <- roc(y[-test_index], pred_train_lasso)
-
-auc_test_lasso <- roc(y[test_index], pred_test_lasso)
+#finding the AUC for the testing data
+auc_test_10fold <- roc(y[test_index], pred_test_10fold)
 
 par(mfrow = c(1,2))
 
-plot(auc_train_lasso)
+#ploting the AUC plot for the training data
+plot(auc_train_10fold)
 
-plot(auc_test_lasso)
+#plotting the AUC curve for the testing data
+plot(auc_test_10fold)
 
 par(mfrow = c(1,1))
 
-plot(cvx_lasso)
 
 
-###coefficients 
-coef_lasso <- coef(cvx_lasso, s = cvx_lasso$lambda.min)[,1]
-coef_lasso <- coef_lasso[coef_lasso != 0]
-coef_lasso_order <- coef_lasso[order(abs(coef_lasso), decreasing = TRUE)]
-coef_lasso_order
+###Looking at the optimal threshold - test
+
+#creating a matrix of the sensitivities and specificity for each of the thresholds used to generate the ROC curve
+sn_sp_threshold_test_10fold <- cbind(auc_test_10fold$sensitivities, auc_test_10fold$specificities)
+
+indx_test_10fold <- which.max(apply(sn_sp_threshold_test_10fold, 1, min))
+sn_sp_threshold_test_10fold[indx_test_10fold,]
+
+#threshold for the min max sn-sp
+threshold_test <- auc_test_10fold$thresholds[indx_test_10fold]
+
+
+#optimal sn-sp and threshold for 10fold
+sn_sp_threshold_test_10fold[indx_test_10fold,];threshold_test 
+
+
+
+###Looking at the optimal threshold - train
+
+#creating a matrix of the sensitivities and specificity for each of the thresholds used to generate the ROC curve
+sn_sp_threshold_train_10fold <- cbind(auc_train_10fold$sensitivities, auc_train_10fold$specificities)
+
+indx_train_10fold <- which.max(apply(sn_sp_threshold_train_10fold, 1, min))
+sn_sp_threshold_train_10fold[indx_train_10fold,]
+
+#threshold for the min max sn-sp
+threshold_train <- auc_train_10fold$thresholds[indx_train_10fold]
+
+#optimal sn-sp and threshold for 10fold
+sn_sp_threshold_train_10fold[indx_train_10fold,];threshold_train 
+
+
+###coefficients - 10 fold
+#extracting the coefficients for alpha=0.7, lambda = lambda.min
+coef_10fold <- coef(cvx_10fold, s = cvx_10fold$lambda.min)[,1]
+#subset all the coefficents  that don't equal to 0
+coef_10fold <- coef_10fold[coef_10fold != 0]
+#order the coefficients in decreasing order by their absolute magnitudes
+coef_10fold_order <- coef_10fold[order(abs(coef_10fold), decreasing = TRUE)]
+coef_10fold_order
+
+#training model 20 -folds
+
+#generate fold memberships for 20 fold
+cvxf <- cv.glmnet(x[-test_index,],y[-test_index], nfolds = 20, keep = TRUE )
+table(cvxf$foldid)
+foldid_20 = cvxf$foldid
+
+auc_df_20 <- data.frame(matrix(NA, nrow = length(alphas), ncol = 3))
+colnames(auc_df_20) <- c("Training_AUC", "Testing_AUC", "Alpha_Values")
+
+#20 fold
+for (i in 1:length(alphas)) {
+  #training the model
+  cvx <- cv.glmnet(x[-test_index,], y[-test_index], nfolds = 20, family = "binomial", alpha = alphas[i], type.measure = "deviance", foldid = foldid_20)
+  #using the trained model to make predictions of the training data
+  pred_train_20 <- predict(cvx, newx = x[-test_index,], type = "response", s=cvx$lambda.min)[,1]
+  #using the trained model to make predictions for the testing data 
+  pred_test_20 <- predict(cvx, newx = x[test_index,], type = "response", s=cvx$lambda.min )[,1]
+  #calculating the area under the curve for the training predictions 
+  auc_train_20 <- roc(y[-test_index], pred_train_20)
+  #calculating the area under the curve for the testing predictions 
+  auc_test_20 <- roc(y[test_index], pred_test_20)
+  #appending the area under of the curve for each model to auc_df
+  auc_df_20[i,] <- c(auc_train_20$auc[1], auc_test_20$auc[1], alphas[i])
+  
+}
+
+#getting the model associated with the largest AUC on the testing data
+auc_df_20[which.max(auc_df_20$Testing_AUC),]
+
+##taking a closer look at the model with the best AUC
+
+#training the model with alpha = 0.45 and number of folds = 20
+cvx_20fold <- cv.glmnet(x[-test_index,], y[-test_index], nfolds = 20, family = "binomial", alpha = 0.45, type.measure = "deviance", foldid = foldid_20)
+
+#plotting bionomial deviance and log(lambda) for alpha = 0.45
+par(mfrow = c(1,1))
+plot(cvx_20fold)
+
+#predicting using the testing data
+pred_test_20fold <- predict(cvx_20fold, newx = x[test_index,], type = "response", s=cvx_20fold$lambda.min )[,1]
+
+#predicting using the training data
+pred_train_20fold <- predict(cvx_20fold, newx = x[-test_index,], type = "response", s=cvx_20fold$lambda.min )[,1]
+
+
+#finding the AUC for the training data
+auc_train_20fold <- roc(y[-test_index], pred_train_20fold)
+
+#finding the AUC for the testing data
+auc_test_20fold <- roc(y[test_index], pred_test_20fold)
+
+par(mfrow = c(1,2))
+
+#ploting the AUC plot for the training data
+plot(auc_train_20fold)
+
+#plotting the AUC curve for the testing data
+plot(auc_test_20fold)
+
+par(mfrow = c(1,1))
+
+###Looking at the optimal threshold - test
+
+#creating a matrix of the sensitivities and specificity for each of the thresholds used to generate the ROC curve
+sn_sp_threshold_test_20fold <- cbind(auc_test_20fold$sensitivities, auc_test_20fold$specificities)
+
+indx_test_20fold <- which.max(apply(sn_sp_threshold_test_20fold, 1, min))
+sn_sp_threshold_test_20fold[indx_test_20fold,]
+
+#threshold for the min max sn-sp
+threshold_test_20fold <- auc_test_20fold$thresholds[indx_test_20fold]
+
+
+#optimal sn-sp and threshold for 20 fold
+sn_sp_threshold_test_20fold[indx_test_20fold,];threshold_test_20fold
+
+
+###Looking at the optimal threshold - training
+
+#creating a matrix of the sensitivities and specificity for each of the thresholds used to generate the ROC curve
+sn_sp_threshold_train_20fold <- cbind(auc_train_20fold$sensitivities, auc_train_20fold$specificities)
+
+indx_train_20fold <- which.max(apply(sn_sp_threshold_train_20fold, 1, min))
+sn_sp_threshold_train_20fold[indx_train_20fold,]
+
+#threshold for the min max sn-sp
+threshold_train_20fold <- auc_train_20fold$thresholds[indx_train_20fold]
+
+
+#optimal sn-sp and threshold for 20 fold
+sn_sp_threshold_train_20fold[indx_train_20fold,];threshold_train_20fold
+
+
+###coefficients - 10 fold
+#extracting the coefficients for alpha=0.45, lambda = lambda.min
+coef_20fold <- coef(cvx_20fold, s = cvx_20fold$lambda.min)[,1]
+#subset all the coefficents  that don't equal to 0
+coef_20fold <- coef_20fold[coef_20fold != 0]
+#order the coefficients in decreasing order by their absolute magnitudes
+coef_20fold_order <- coef_20fold[order(abs(coef_20fold), decreasing = TRUE)]
+coef_20fold_order
 
 
 ###looking closer at age
